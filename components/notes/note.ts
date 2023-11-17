@@ -1,31 +1,13 @@
-import {
-  blue,
-  green,
-  red,
-  white,
-  yellow,
-  cyan,
-  magenta,
-  RGB,
-} from "@jhuggett/terminal";
+import { white } from "@jhuggett/terminal";
 import { Element } from "@jhuggett/terminal/elements/element";
-import { XY, subtractXY } from "@jhuggett/terminal/xy";
+import { XY } from "@jhuggett/terminal/xy";
+import { setHelpContent } from "../../pages/board/help";
+import { Note, colors } from "../../models/notes/note";
+import { Board } from "../../models/boards/board";
 import { debugLog } from "../..";
-import { SubscribableEvent } from "@jhuggett/terminal/subscribable-event";
-import { border } from "@jhuggett/terminal/cursors/cursor";
+import { SubscriptionManager } from "@jhuggett/terminal/subscribable-event";
 
-const colorLightness = 0.3;
-
-const colors = [
-  yellow(colorLightness),
-  red(colorLightness),
-  blue(colorLightness),
-  green(colorLightness),
-  cyan(colorLightness),
-  magenta(colorLightness),
-];
-
-const noteContentComponent = (parent: Element<any>) => {
+const noteContentComponent = (parent: Element<any>, note: Note) => {
   const component = parent.createChildElement(
     ({}) => {
       return {
@@ -40,18 +22,25 @@ const noteContentComponent = (parent: Element<any>) => {
       };
     },
     {
-      contents: [] as string[],
+      note: note,
     }
   );
 
   component.renderer = ({ cursor, properties }) => {
     cursor.properties.foregroundColor = white();
+    cursor.properties.foregroundColor.a = component.isFocused ? 1 : 0.85;
 
-    for (const line of properties.contents) {
-      cursor.write(line);
-      cursor.carriageReturn();
-      if (cursor.location.y >= component.bounds.height) {
-        break;
+    cursor.properties.bold = !component.isFocused;
+
+    cursor.autoNewLine = false;
+    if (properties.note.content) {
+      for (const line of properties.note.content) {
+        try {
+          cursor.write(line);
+          cursor.newLine();
+        } catch (error) {
+          //debugLog(Bun.inspect(error));
+        }
       }
     }
   };
@@ -59,73 +48,50 @@ const noteContentComponent = (parent: Element<any>) => {
   return component;
 };
 
-const noteBackgroundComponent = (
+export const noteBackgroundComponent = (
   parent: Element<any>,
-  startingHeight: number
+  startingBoardOffset: XY,
+  note: Note
 ) => {
   const component = parent.createChildElement(
-    ({ start, height }) => {
-      const width = 25;
+    ({ note, boardOffset }) => {
       return {
-        start,
+        start: {
+          x: note.position.x - boardOffset.x,
+          y: note.position.y - boardOffset.y,
+        },
         end: {
-          x: start.x + width,
-          y: start.y + height,
+          x: note.position.x - boardOffset.x + note.maxLineWidth + 2,
+          y:
+            note.position.y -
+            boardOffset.y +
+            Math.max(note.minHeight, note.content.length + 2),
         },
       };
     },
     {
-      start: {
-        x: Math.round(
-          0.5 * parent.bounds.width + parent.bounds.globalStart.x - 10
-        ),
-        y: Math.round(
-          0.5 * parent.bounds.height + parent.bounds.globalStart.y - 6
-        ),
-      },
-      height: startingHeight,
-      color: colors[0],
-      focused: false,
+      boardOffset: startingBoardOffset,
+      note: note,
     }
   );
 
   component.renderer = ({ cursor, properties }) => {
-    cursor.properties.backgroundColor = properties.color;
-    cursor.properties.backgroundColor.a = properties.focused ? 0.9 : 0.5;
+    cursor.properties.backgroundColor = properties.note.color;
+    cursor.properties.backgroundColor.a = component.isFocused ? 0.95 : 0.75;
     cursor.fill(" ");
   };
 
   component.on("Arrow Up", () => {
-    component.reactivelyUpdateProperties(
-      ({ start }) => ({
-        start: { x: start.x, y: start.y - 1 },
-      }),
-      true
-    );
+    note.setPosition({ x: note.position.x, y: note.position.y - 1 });
   });
   component.on("Arrow Down", () => {
-    component.reactivelyUpdateProperties(
-      ({ start }) => ({
-        start: { x: start.x, y: start.y + 1 },
-      }),
-      true
-    );
+    note.setPosition({ x: note.position.x, y: note.position.y + 1 });
   });
   component.on("Arrow Left", () => {
-    component.reactivelyUpdateProperties(
-      ({ start }) => ({
-        start: { x: start.x - 1, y: start.y },
-      }),
-      true
-    );
+    note.setPosition({ x: note.position.x - 1, y: note.position.y });
   });
   component.on("Arrow Right", () => {
-    component.reactivelyUpdateProperties(
-      ({ start }) => ({
-        start: { x: start.x + 1, y: start.y },
-      }),
-      true
-    );
+    note.setPosition({ x: note.position.x + 1, y: note.position.y });
   });
 
   return component;
@@ -135,200 +101,148 @@ export class NoteComponent {
   backgroundElement: ReturnType<typeof noteBackgroundComponent>;
   contentElement: ReturnType<typeof noteContentComponent>;
 
-  content: string = "";
-  wordWrappedContent() {
-    const words = this.content.split(" ");
+  subscriptions: SubscriptionManager = new SubscriptionManager();
 
-    const partedWords = words.map((word) => {
-      let parts = [];
-      for (
-        let i = 0;
-        i < word.length;
-        i += this.contentElement.bounds.width - 1
-      ) {
-        parts.push(word.slice(i, i + this.contentElement.bounds.width - 1));
-      }
+  updateDecorativeCursorLocation() {
+    const x = this.note.content[this.note.content.length - 1]?.length || 0;
+    const y = this.note.content.length > 0 ? this.note.content.length - 1 : 0;
 
-      return parts;
-    });
-
-    const lines: string[] = [];
-
-    let currentLine = "";
-    for (const word of partedWords) {
-      for (const part of word) {
-        if (currentLine.length >= this.contentElement.bounds.width) {
-          lines.push(currentLine);
-          currentLine = "";
-        }
-        currentLine += part + " ";
-      }
-    }
-    if (currentLine.length > 0) {
-      lines.push(currentLine);
-    }
-
-    return lines;
-  }
-  onContentChange = new SubscribableEvent<string>();
-
-  cursorLocationX = 0;
-  onCursorLocationXChange = new SubscribableEvent<number>();
-
-  moveCursorLeft() {
-    if (this.cursorLocationX > 0) {
-      this.cursorLocationX -= 1;
-      this.onCursorLocationXChange.emit(this.cursorLocationX);
-    }
+    this.root.shell.setDecorativeCursorLocation(
+      this.contentElement.bounds.toGlobal({
+        x,
+        y,
+      })
+    );
   }
 
-  moveCursorRight() {
-    if (this.cursorLocationX < this.content.length) {
-      this.cursorLocationX += 1;
-      this.onCursorLocationXChange.emit(this.cursorLocationX);
-    }
+  destroy() {
+    this.backgroundElement.destroy();
+    this.backgroundElement.clear();
+    this.contentElement.clear();
+
+    this.subscriptions.unsubscribeAll();
   }
 
-  moveCursorUp() {
-    if (this.cursorLocationX >= this.contentElement.bounds.width) {
-      this.cursorLocationX -= this.contentElement.bounds.width;
-    } else {
-      this.cursorLocationX = 0;
-    }
-    this.onCursorLocationXChange.emit(this.cursorLocationX);
-  }
+  constructor(
+    private root: Element<any>,
+    public note: Note,
+    public board: Board
+  ) {
+    this.backgroundElement = noteBackgroundComponent(root, board.offset, note);
+    this.contentElement = noteContentComponent(this.backgroundElement, note);
 
-  moveCursorDown() {
-    if (
-      this.cursorLocationX + this.contentElement.bounds.width <
-      this.content.length
-    ) {
-      this.cursorLocationX += this.contentElement.bounds.width;
-    } else {
-      this.cursorLocationX = this.content.length;
-    }
-    this.onCursorLocationXChange.emit(this.cursorLocationX);
-  }
-
-  addCharacter(character: string) {
-    this.content =
-      this.content.slice(0, this.cursorLocationX) +
-      character +
-      this.content.slice(this.cursorLocationX);
-    this.moveCursorRight();
-    this.onContentChange.emit(this.content);
-  }
-
-  removeCharacter() {
-    this.content =
-      this.content.slice(0, this.cursorLocationX - 1) +
-      this.content.slice(this.cursorLocationX);
-    this.moveCursorLeft();
-    this.onContentChange.emit(this.content);
-  }
-
-  lastDragLocation: XY | null = null;
-
-  constructor(private root: Element<any>) {
-    this.backgroundElement = noteBackgroundComponent(root, 3);
-    this.contentElement = noteContentComponent(this.backgroundElement);
-
-    this.contentElement.onFocus.subscribe(() => {
-      this.root.shell.showCursor(true);
-      this.onCursorLocationXChange.emit(this.cursorLocationX);
-    });
-    this.contentElement.onBlur.subscribe(() => {
-      this.root.shell.showCursor(false);
-    });
-
-    this.onContentChange.subscribe((content) => {
-      const wrappedContent = this.wordWrappedContent();
-
-      const backgroundHeight = wrappedContent.length + 3;
-
-      this.contentElement.properties.contents = wrappedContent;
-
-      if (backgroundHeight !== this.backgroundElement.properties.height) {
+    this.subscriptions.add(
+      board.onOffsetChange.subscribe((offset) => {
         this.backgroundElement.reactivelyUpdateProperties(
-          ({ height }) => ({
-            height: backgroundHeight,
+          () => ({
+            boardOffset: offset,
           }),
           true
         );
-      } else {
-        this.contentElement.render();
-      }
-    });
-
-    this.onCursorLocationXChange.subscribe((cursorLocationX) => {
-      const y = Math.floor(
-        this.cursorLocationX / this.contentElement.bounds.width
-      );
-      const x = this.cursorLocationX % this.contentElement.bounds.width;
-
-      this.root.shell.setDecorativeCursorLocation(
-        this.contentElement.bounds.toGlobal({
-          x,
-          y,
-        })
-      );
-    });
+      })
+    );
 
     this.backgroundElement.on("Enter", () => {
-      debugLog("Enter");
       this.contentElement.focus();
     });
     this.backgroundElement.on("Any number", (key) => {
       const i = key;
       if (i >= 0 && i < colors.length) {
-        this.backgroundElement.reactivelyUpdateProperties(() => ({
-          color: colors[i],
-        }));
+        this.note.setColor(colors[i]);
       }
     });
 
-    this.backgroundElement.onFocus.subscribe(() => {
-      this.backgroundElement.reactivelyUpdateProperties(() => ({
-        focused: true,
-      }));
-    });
-    this.backgroundElement.onBlur.subscribe(() => {
-      this.backgroundElement.reactivelyUpdateProperties(() => ({
-        focused: false,
-      }));
-    });
+    this.subscriptions.addMultiple([
+      this.contentElement.onFocus.subscribe(() => {
+        this.root.shell.showCursor(true);
+        this.updateDecorativeCursorLocation();
+        this.contentElement.render();
+
+        setHelpContent([
+          {
+            info: "Exit edit mode",
+            command: "Esc",
+          },
+        ]);
+      }),
+      this.contentElement.onBlur.subscribe(() => {
+        this.root.shell.showCursor(false);
+        this.contentElement.render();
+      }),
+      this.note.onContentChange.subscribe((content) => {
+        this.backgroundElement.recalculateBounds();
+        this.contentElement.render();
+        this.updateDecorativeCursorLocation();
+      }),
+      this.note.onColorChange.subscribe((color) => {
+        this.backgroundElement.render();
+      }),
+      this.contentElement.onBlur.subscribe(() => {
+        this.root.shell.showCursor(false);
+      }),
+      this.backgroundElement.onFocus.subscribe(() => {
+        setHelpContent([
+          {
+            info: "Edit mode",
+            command: "Enter",
+          },
+          {
+            info: "Change color",
+            command: "0-9",
+          },
+          {
+            info: "Delete note",
+            command: "-",
+          },
+          {
+            info: "Move note",
+            command: "Arrow keys",
+          },
+          {
+            info: "Rotate focus",
+            command: "Tab",
+          },
+          {
+            info: "Exit board",
+            command: "Escape",
+          },
+        ]);
+        this.backgroundElement.render();
+      }),
+      this.backgroundElement.onBlur.subscribe(() => {
+        this.backgroundElement.render();
+      }),
+      note.onPositionChange.subscribe(() => {
+        this.backgroundElement.recalculateBounds();
+      }),
+    ]);
 
     this.contentElement.on("Escape", () => {
-      debugLog("Escape");
       this.backgroundElement.focus();
       return "stop propagation";
     });
     this.contentElement.on("Any character", (key) => {
-      this.addCharacter(key);
+      this.note.addCharacter(key);
       return "stop propagation";
     });
     this.contentElement.on("Delete", () => {
-      this.removeCharacter();
+      this.note.backspace();
       return "stop propagation";
     });
     this.contentElement.on("Space", () => {
-      this.addCharacter(" ");
+      this.note.addCharacter(" ");
       return "stop propagation";
     });
-    this.contentElement.on("Arrow Left", () => {
-      this.moveCursorLeft();
+    this.contentElement.on("Enter", () => {
+      this.note.newLine();
       return "stop propagation";
     });
-    this.contentElement.on("Arrow Right", () => {
-      this.moveCursorRight();
+    this.contentElement.on("Tab", () => {
+      this.note.addCharacter(" ");
+      this.note.addCharacter(" ");
       return "stop propagation";
     });
-    this.contentElement.on("Arrow Up", () => {
-      this.moveCursorUp();
-      return "stop propagation";
-    });
-    this.contentElement.on("Arrow Down", () => {
-      this.moveCursorDown();
+    this.backgroundElement.on("Mouse up", () => {
       return "stop propagation";
     });
 
@@ -336,11 +250,3 @@ export class NoteComponent {
     this.contentElement.render();
   }
 }
-
-/*
-Word wrapping
-
-Persisting boards
-
-There's some rendering issues
-*/
