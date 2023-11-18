@@ -1,15 +1,5 @@
-# notes
+# Noteworthy
 
-To install dependencies:
+Sticky note app for your terminal.
 
-```bash
-bun install
-```
-
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.0.3. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+See releases for, well, releases. There's a compiled executable that's been tested on Mac. Also a bundle `index.js` that's far smaller that can be simply ran with `bun run index.js` (assuming you have [Bunjs](https://bun.sh/) installed).
