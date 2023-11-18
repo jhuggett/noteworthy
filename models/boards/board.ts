@@ -6,13 +6,18 @@ import { yellow } from "@jhuggett/terminal";
 import { XY } from "@jhuggett/terminal/xy";
 import { SubscribableEvent } from "@jhuggett/terminal/subscribable-event";
 
-export const dataPath = join(
-  process.env.APPDATA ||
-    (process.platform == "darwin"
-      ? process.env.HOME + "/Library/Application Support"
-      : process.env.HOME + "/.local/share"),
-  "com.jhuggett.noteworthy"
-);
+const getDataPath = () => {
+  const appdata = Bun.env.APPDATA;
+  const home = Bun.env.HOME;
+
+  return [
+    appdata ||
+      (process.platform == "darwin"
+        ? home + "/Library/Application Support"
+        : home + "/.local/share"),
+    "com.jhuggett.noteworthy",
+  ];
+};
 
 export class Board {
   constructor(
@@ -59,7 +64,7 @@ export class Board {
   }
 
   async save() {
-    const dir = join(dataPath, "boards");
+    const dir = join(...getDataPath(), "boards");
     const filename = `${this.name}.json`;
 
     const filePath = join(dir, filename);
@@ -72,7 +77,9 @@ export class Board {
   }
 
   static async loadAll() {
-    const dir = join(dataPath, "boards");
+    const dir = join(...getDataPath(), "boards");
+
+    mkdirSync(dir, { recursive: true });
 
     const files = readdirSync(dir);
 

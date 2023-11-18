@@ -1,12 +1,7 @@
-import {
-  BunShell,
-  UnknownKeyCodeError,
-  black,
-  green,
-  white,
-} from "@jhuggett/terminal";
+import { BunShell, UnknownKeyCodeError, white } from "@jhuggett/terminal";
 import { MainMenuPage } from "./pages/main-menu/main-menu";
 import { Page } from "./pages/page";
+import { within } from "@jhuggett/terminal/bounds/bounds";
 
 const shell = new BunShell();
 shell.showCursor(false);
@@ -37,25 +32,32 @@ const content = root.createChildElement(() => {
   };
 }, null);
 
-const debug = root.createChildElement(
-  () => {
-    if (!debugging) {
-      return { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } };
-    }
-
-    return {
-      start: { x: Math.round(root.bounds.width * 0.5), y: 0 },
-      end: { x: root.bounds.width, y: root.bounds.height },
-    };
-  },
-  {
-    logs: ["Debug here"],
+const debug = root.createChildElement(() => {
+  if (!debugging) {
+    return { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } };
   }
-);
+
+  return {
+    start: { x: Math.round(root.bounds.width * 0.5), y: 0 },
+    end: { x: root.bounds.width, y: root.bounds.height },
+  };
+}, null);
 
 debug.setConstantZ(9999);
 
 debug.renderer = ({ cursor, properties }) => {
+  cursor.properties.backgroundColor = white(0.1);
+  cursor.fill(" ");
+};
+
+const debugContent = debug.createChildElement(
+  () => within(debug, { padding: 1 }),
+  {
+    logs: [] as string[],
+  }
+);
+
+debugContent.renderer = ({ cursor, properties }) => {
   cursor.properties.foregroundColor = white();
   //cursor.fill(" ");
   cursor.moveToStart();
@@ -78,6 +80,7 @@ debug.renderer = ({ cursor, properties }) => {
 
 if (debugging) {
   debug.render();
+  debugContent.render();
 }
 
 export const debugLog = (log: any) => {
@@ -88,18 +91,18 @@ export const debugLog = (log: any) => {
   log = [`${new Date().toLocaleTimeString()}: `, ...log].join("");
   log = log.split(`\n`) as string[];
 
-  debug.reactivelyUpdateProperties(({ logs }) => {
+  debugContent.reactivelyUpdateProperties(({ logs }) => {
     const logParts = [];
     for (const line of log) {
       const splitLogs = [];
-      for (let i = 0; i < line.length; i += debug.bounds.width) {
-        splitLogs.push(line.slice(i, i + debug.bounds.width));
+      for (let i = 0; i < line.length; i += debugContent.bounds.width) {
+        splitLogs.push(line.slice(i, i + debugContent.bounds.width));
       }
       logParts.push(...splitLogs);
     }
     logs.unshift(...logParts);
 
-    const maxHeight = debug.bounds.height;
+    const maxHeight = debugContent.bounds.height;
 
     if (logs.length >= maxHeight) {
       return { logs: logs.slice(0, maxHeight - 1) };
@@ -111,6 +114,8 @@ export const debugLog = (log: any) => {
 content.focus();
 
 let page: Page | null = new MainMenuPage(shell);
+
+shell.enableMouseTracking();
 
 while (page) {
   content.clearThisAndEverythingAbove();
@@ -125,11 +130,15 @@ while (page) {
     if (e instanceof UnknownKeyCodeError) {
       debugLog(e);
     } else {
+      shell.disableMouseTracking();
+      shell.clear();
+      shell.showCursor(true);
       throw e;
     }
   }
 }
 
+shell.disableMouseTracking();
 shell.clear();
 shell.showCursor(true);
 

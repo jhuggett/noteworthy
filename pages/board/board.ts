@@ -6,7 +6,10 @@ import {
   noteBackgroundComponent,
 } from "../../components/notes/note";
 import { XY, subtractXY } from "@jhuggett/terminal/xy";
-import { SubscribableEvent } from "@jhuggett/terminal/subscribable-event";
+import {
+  SubscribableEvent,
+  SubscriptionManager,
+} from "@jhuggett/terminal/subscribable-event";
 import { helpComponent, setHelpContent } from "./help";
 import { MainMenuPage } from "../main-menu/main-menu";
 import { Board } from "../../models/boards/board";
@@ -25,10 +28,12 @@ export class BoardPage extends Page {
     this.board = board;
   }
 
+  subscriptions = new SubscriptionManager();
+
   lastFocusedNote: NoteComponent | null = null;
   rotateFocus() {
     if (this.notes.length === 0) return;
-    if (this.notes.length === 1) {
+    if (this.lastFocusedNote === null || this.notes.length === 1) {
       this.focusOnNote(this.notes[0]);
       return;
     }
@@ -40,7 +45,15 @@ export class BoardPage extends Page {
         } else {
           this.focusOnNote(this.notes[0]);
         }
+        return;
       }
+    }
+  }
+
+  destroy() {
+    this.subscriptions.unsubscribeAll();
+    for (const note of this.notes) {
+      note.destroy();
     }
   }
 
@@ -57,7 +70,12 @@ export class BoardPage extends Page {
     component.backgroundElement.on("Mouse down", () => {
       this.draggingElement = component.backgroundElement;
       this.lastDragLocation = null;
-      this.focusOnNote(component);
+
+      if (component.backgroundElement.isFocused) {
+        component.contentElement.focus();
+      } else {
+        this.focusOnNote(component);
+      }
 
       return "stop propagation";
     });
@@ -75,6 +93,8 @@ export class BoardPage extends Page {
         component.backgroundElement.moveInFrontOf(this.backgroundElement!);
       }),
     ]);
+
+    this.focusOnNote(component);
 
     this.notes.push(component);
   }
@@ -120,7 +140,6 @@ export class BoardPage extends Page {
     root.on("Mouse down", (xy) => {
       this.lastDragLocation = null;
       this.draggingElement = null;
-      debugLog({ xy });
       root.focus();
     });
     root.on("Mouse up", () => {
@@ -151,6 +170,10 @@ export class BoardPage extends Page {
           x: this.draggingElement.properties.note.position.x + delta.x,
           y: this.draggingElement.properties.note.position.y + delta.y,
         });
+
+        if (this.draggingElement.isFocused === false) {
+          this.draggingElement.focus();
+        }
       }
       this.lastDragLocation = globalLocation;
 
@@ -164,30 +187,32 @@ export class BoardPage extends Page {
     };
     root.render();
 
-    root.onFocus.subscribe(() => {
-      setHelpContent([
-        {
-          info: "New note",
-          command: "+",
-        },
-        {
-          info: "Focus note",
-          command: "Mouse Click",
-        },
-        {
-          info: "Rotate focus",
-          command: "Tab",
-        },
-        {
-          info: "Move board",
-          command: "Mouse Drag",
-        },
-        {
-          info: "Exit board",
-          command: "Esc",
-        },
-      ]);
-    });
+    this.subscriptions.add(
+      root.onFocus.subscribe(() => {
+        setHelpContent([
+          {
+            info: "New note",
+            command: "+",
+          },
+          {
+            info: "Focus note",
+            command: "Mouse Click",
+          },
+          {
+            info: "Rotate focus",
+            command: "Tab",
+          },
+          {
+            info: "Move board",
+            command: "Mouse Drag",
+          },
+          {
+            info: "Exit board",
+            command: "Esc",
+          },
+        ]);
+      })
+    );
 
     root.focus();
 
@@ -199,6 +224,7 @@ export class BoardPage extends Page {
       await nextUserInteraction();
     }
 
+    this.destroy();
     this.board.save();
 
     return new MainMenuPage(root.shell);
